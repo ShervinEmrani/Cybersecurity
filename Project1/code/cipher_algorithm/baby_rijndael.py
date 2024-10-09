@@ -1,0 +1,209 @@
+def babyr_enc(block, key):
+    # Assume block size of 16 bits, default round No. 4.
+
+    # basic configuration: T matrix
+    t = [[1, 0, 1, 0, 0, 0, 1, 1], [1, 1, 0, 1, 0, 0, 0, 1], [1, 1, 1, 0, 1, 0, 0, 0], [0, 1, 0, 1, 0, 1, 1, 1], [
+        0, 0, 1, 1, 1, 0, 1, 0], [0, 0, 0, 1, 1, 1, 0, 1], [1, 0, 0, 0, 1, 1, 1, 0], [0, 1, 1, 1, 0, 1, 0, 1]]
+
+    # set bit mask
+    m0 = 0xf000
+    m1 = 0x0f00
+    m2 = 0x00f0
+    m3 = 0x000f
+
+    # get state entries
+    # print(f"{block=}")
+    h0 = (block & m0) >> 12
+    h1 = (block & m1) >> 8
+    h2 = (block & m2) >> 4
+    h3 = block & m3
+
+    # get key entries
+    k0 = (key & m0) >> 12
+    k1 = (key & m1) >> 8
+    k2 = (key & m2) >> 4
+    k3 = (key & m3)
+
+    # make state
+    a = [h0, h1, h2, h3]
+    k = [k0, k1, k2, k3]
+
+    # configure round keys km_0...4
+    km_list = [get_key_m(k, i) + get_key_m(k, i+1) for i in range(0, 10, 2)]
+
+    # round operation
+    for i in range(5):
+        # before round
+        if i == 0:
+            a = XOR_m(a, km_list[i], 4)
+        # final round
+        elif i == 4:
+            a = XOR_m(sig_hat_operation(S_operation(a)), km_list[i], 4)
+        else:
+            a = XOR_m(mult_m(t, sig_hat_operation(
+                S_operation(a))), km_list[i], 4)
+    return a
+
+
+def babyr_dec(block, key):
+    # basic configuration: Ti matrix
+    ti = [[0, 0, 1, 0, 0, 1, 0, 1], [1, 0, 0, 1, 1, 0, 1, 0], [1, 1, 0, 0, 1, 1, 0, 1], [0, 1, 0, 0, 1, 0, 1, 1], [
+        0, 1, 0, 1, 0, 0, 1, 0], [1, 0, 1, 0, 1, 0, 0, 1], [1, 1, 0, 1, 1, 1, 0, 0], [1, 0, 1, 1, 0, 1, 0, 0]]
+
+    # set bit mask
+    m0 = 0xf000
+    m1 = 0x0f00
+    m2 = 0x00f0
+    m3 = 0x000f
+
+    # get state entries
+    h0 = (block & m0) >> 12
+    h1 = (block & m1) >> 8
+    h2 = (block & m2) >> 4
+    h3 = block & m3
+
+    # get key entries
+    k0 = (key & m0) >> 12
+    k1 = (key & m1) >> 8
+    k2 = (key & m2) >> 4
+    k3 = (key & m3)
+
+    # make state
+    a = [h0, h1, h2, h3]
+    k = [k0, k1, k2, k3]
+
+    # configure round keys km_0...4
+    # reverse the list for decryption
+    km_list = [get_key_m(k, i) + get_key_m(k, i+1) for i in range(8, -1, -2)]
+
+    # round operation
+    for i in range(5):
+        # final round
+        if i == 4:
+            a = XOR_m(a, km_list[i], 4)
+        # initial round
+        elif i == 0:
+            a = Si_operation(sig_hat_operation(XOR_m(a, km_list[i], 4)))
+        else:
+            a = Si_operation(sig_hat_operation(
+                mult_m(ti, XOR_m(a, km_list[i], 4))))
+    return a
+
+
+def mult_m(t, x):
+    # input: t: binary matrix 8*8, x: original
+    bin_x_m = convert_to_bin_m(x)  # now 8*2
+
+    product_m = [[], []]  # size 8*2
+
+    for i in range(2):
+        for j in range(8):
+            sum = 0
+            for k in range(8):
+                sum += bin_x_m[i][k] * t[j][k]
+            product_m[i].append(sum % 2)
+
+    product_m = [product_m[0][:4], product_m[0][4:], product_m[1]
+                 [:4], product_m[1][4:]]  # intermediate 4*4 form
+
+    res_m = []  # final hex size 4 arr
+    for n in product_m:
+        x3 = n[0] * 8
+        x2 = n[1] * 4
+        x1 = n[2] * 2
+        x0 = n[3]
+        res_m.append(x3 + x2 + x1 + x0)
+    return res_m
+
+
+def convert_to_bin_m(x):
+    # input: x: size 4, output: 8*2
+    m0 = 0x1
+    m1 = 0x2
+    m2 = 0x4
+    m3 = 0x8
+
+    bin_m = []  # intermediate 4*4 form
+    for i in range(4):
+        x3 = x[i] & m3
+        x2 = x[i] & m2
+        x1 = x[i] & m1
+        x0 = x[i] & m0
+        xi = [x3, x2, x1, x0]
+        for i in range(4):
+            if xi[i] > 0:
+                xi[i] = 1
+        bin_m.append(xi)
+    return [bin_m[0]+bin_m[1], bin_m[2]+bin_m[3]]  # final 8*2 form
+
+
+def XOR_m(x, y, l):
+    # assume x, y of same size
+    # execute XOR operation for each entry
+    for i in range(l):
+        x[i] = x[i] ^ y[i]
+    return x
+
+
+def reverse_m(x):
+    # assume size 2
+    tmp = x[0]
+    x[0] = x[1]
+    x[1] = tmp
+    return x
+
+
+def S_operation(x):
+    S_table = [10, 4, 3, 11, 8, 14, 2, 12, 5, 7, 6, 15, 0, 1, 9, 13]
+    for i in range(len(x)):
+        x[i] = S_table[x[i]]
+    return x
+
+
+def Si_operation(x):
+    Si_table = [12, 13, 6, 2, 1, 8, 10, 9, 4, 14, 0, 3, 7, 15, 5, 11]
+    for i in range(len(x)):
+        x[i] = Si_table[x[i]]
+    return x
+
+
+def sig_hat_operation(x):
+    # assume size 4
+    tmp = x[1]
+    x[1] = x[3]
+    x[3] = tmp
+    return x
+
+
+def get_y_m(n):
+    # assume n is between 1-4
+    return [2**(n-1), 0]
+
+
+def get_key_m(key, key_id):
+    # input: key: [k0, k1, k2, k3], key_id: 0-4
+    k0 = key[0]
+    k1 = key[1]
+    k2 = key[2]
+    k3 = key[3]
+
+    if key_id == 0:
+        return [k0, k1]
+    elif key_id == 1:
+        return [k2, k3]
+    else:
+        if key_id % 2 == 0:
+            return XOR_m(XOR_m(get_key_m(key, key_id-2), S_operation(reverse_m(get_key_m(key, key_id-1))), 2), get_y_m(key_id//2), 2)
+        else:
+            return XOR_m(get_key_m(key, key_id-2), get_key_m(key, key_id-1), 2)
+
+
+def print_b(block):
+    char_table = ['0', '1', '2', '3', '4', '5', '6',
+                  '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f']
+    res = ""
+    for x in block:
+        res += char_table[x]
+    return res
+
+
